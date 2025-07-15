@@ -164,24 +164,31 @@ class ApplicationBuilder implements Serializable {
             steps.echo "⚠️ Skipping health check."
             return
         }
+    
         String url = "http://localhost:${hostPort}${getHealthEndpoint(appType)}"
         performHealthCheck(url, containerName)
     }
-
+    
     void performHealthCheck(String url, String containerName) {
         try {
             steps.echo "⏳ Starting health check for ${url}"
-            steps.sleep(time: 20, unit: 'SECONDS')
-
+            steps.sleep(time: 40, unit: 'SECONDS')  // ⏱ Increased wait for slow startup
+    
             def success = false
             def maxAttempts = 10
             def delaySeconds = 3
-
+    
             for (int i = 1; i <= maxAttempts; i++) {
-                def code = steps.isUnix()
-                    ? steps.sh(script: "curl -s -o /dev/null -w \"%{http_code}\" ${url}", returnStdout: true).trim()
-                    : extractStatusCode(steps.bat(script: "curl -s -o NUL -w \"%%{http_code}\" ${url}", returnStdout: true))
-
+                def code
+                if (steps.isUnix()) {
+                    code = steps.sh(script: "curl -s -o /dev/null -w \"%{http_code}\" ${url}", returnStdout: true).trim()
+                } else {
+                    // Optional verbose output for debugging
+                    def fullOutput = steps.bat(script: "curl -v ${url}", returnStdout: true)
+                    fullOutput.readLines().each { steps.echo "💬 curl: ${it}" }
+                    code = extractStatusCode(steps.bat(script: "curl -s -o NUL -w \"%%{http_code}\" ${url}", returnStdout: true))
+                }
+    
                 steps.echo "🔁 Attempt ${i}: HTTP ${code}"
                 if (["200", "403", "302"].contains(code)) {
                     steps.echo "✅ Service healthy with code ${code}"
@@ -190,11 +197,11 @@ class ApplicationBuilder implements Serializable {
                 }
                 steps.sleep(time: delaySeconds, unit: 'SECONDS')
             }
-
+    
             if (!success) {
                 throw new Exception("Health check failed after ${maxAttempts} attempts")
             }
-
+    
         } catch (Exception e) {
             steps.echo "❌ Health check failed for ${containerName}"
             runCommand("docker logs ${containerName} || true")
