@@ -164,14 +164,20 @@ class ApplicationBuilder implements Serializable {
             steps.echo "⚠️ Skipping health check."
             return
         }
-
         String url = "http://localhost:${hostPort}${getHealthEndpoint(appType)}"
-        steps.echo "⏳ Health check for ${url}"
+        performHealthCheck(url, containerName)
+    }
 
+    void performHealthCheck(String url, String containerName) {
         try {
-            steps.sleep(time: 10, unit: 'SECONDS')
+            steps.echo "⏳ Starting health check for ${url}"
+            steps.sleep(time: 20, unit: 'SECONDS')
+
             def success = false
-            for (int i = 1; i <= 10; i++) {
+            def maxAttempts = 10
+            def delaySeconds = 3
+
+            for (int i = 1; i <= maxAttempts; i++) {
                 def code = steps.isUnix()
                     ? steps.sh(script: "curl -s -o /dev/null -w \"%{http_code}\" ${url}", returnStdout: true).trim()
                     : extractStatusCode(steps.bat(script: "curl -s -o NUL -w \"%%{http_code}\" ${url}", returnStdout: true))
@@ -182,9 +188,13 @@ class ApplicationBuilder implements Serializable {
                     success = true
                     break
                 }
-                steps.sleep(time: 3, unit: 'SECONDS')
+                steps.sleep(time: delaySeconds, unit: 'SECONDS')
             }
-            if (!success) throw new Exception("Health check failed")
+
+            if (!success) {
+                throw new Exception("Health check failed after ${maxAttempts} attempts")
+            }
+
         } catch (Exception e) {
             steps.echo "❌ Health check failed for ${containerName}"
             runCommand("docker logs ${containerName} || true")
@@ -206,7 +216,7 @@ class ApplicationBuilder implements Serializable {
         '''
         runCommand(cmd)
     }
-
+    
     private String getDefaultDockerPort(String appType) {
         switch (appType) {
             case 'springboot': return '8080'
@@ -214,21 +224,21 @@ class ApplicationBuilder implements Serializable {
             default:           return '80'
         }
     }
-
+    
     private String getHealthEndpoint(String appType) {
         switch (appType) {
             case 'springboot': return "/actuator/health"
             default:           return "/"
         }
     }
-
+    
     private void checkDockerfileExists() {
         def found = steps.findFiles(glob: '**/Dockerfile')
         if (!found || found.size() == 0) {
             steps.error("❌ Dockerfile not found.")
         }
     }
-
+    
     private void runCommand(String command) {
         steps.echo "▶️ ${command}"
         if (steps.isUnix()) {
@@ -237,10 +247,10 @@ class ApplicationBuilder implements Serializable {
             steps.bat(command)
         }
     }
-
+    
     private String extractStatusCode(String output) {
         def lines = output.readLines().findAll { it.trim() }
-        return lines[-1]?.trim()
+        return lines ? lines[-1].trim() : "000"
     }
 
     @NonCPS
