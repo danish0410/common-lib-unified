@@ -228,7 +228,7 @@ class ApplicationBuilder implements Serializable {
     private String getDefaultDockerPort(String appType) {
         switch (appType) {
             case 'springboot': return '8080'
-            case 'eureka':     return '8761'
+            //case 'eureka':     return '8761'
             default:           return '80'
         }
     }
