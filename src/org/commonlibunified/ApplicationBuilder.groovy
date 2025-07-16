@@ -173,11 +173,11 @@ class ApplicationBuilder implements Serializable {
     void performHealthCheck(String url, String containerName) {
         try {
             steps.echo "⏳ Starting health check for ${url}"
-            steps.sleep(time: 40, unit: 'SECONDS')  // ⏱ Increased wait for slow startup
+            steps.sleep(time: 20, unit: 'SECONDS')  // ⏱ Increased wait for slow startup
 
             def success = false
             def maxAttempts = 10
-            def delaySeconds = 3
+            def delaySeconds = 2
 
             for (int i = 1; i <= maxAttempts; i++) {
                 def code
