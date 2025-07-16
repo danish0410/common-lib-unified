@@ -165,20 +165,21 @@ class ApplicationBuilder implements Serializable {
             steps.echo "⚠️ Skipping health check."
             return
         }
-
+    
         String url = "http://localhost:${hostPort}${getHealthEndpoint(appType)}"
-        performHealthCheck(url, containerName)
+        int initialSleep = appType == 'springboot' ? 40 : 20
+        performHealthCheck(url, containerName, initialSleep)
     }
-
-    void performHealthCheck(String url, String containerName) {
+    
+    void performHealthCheck(String url, String containerName, int initialSleep) {
         try {
             steps.echo "⏳ Starting health check for ${url}"
-            steps.sleep(time: 20, unit: 'SECONDS')  // ⏱ Increased wait for slow startup
-
+            steps.sleep(time: initialSleep, unit: 'SECONDS')
+    
             def success = false
             def maxAttempts = 10
-            def delaySeconds = 2
-
+            def delaySeconds = 3
+    
             for (int i = 1; i <= maxAttempts; i++) {
                 def code
                 if (steps.isUnix()) {
@@ -188,7 +189,7 @@ class ApplicationBuilder implements Serializable {
                     fullOutput.readLines().each { steps.echo "💬 curl: ${it}" }
                     code = extractStatusCode(steps.bat(script: "curl -s -o NUL -w \"%%{http_code}\" ${url}", returnStdout: true))
                 }
-
+    
                 steps.echo "🔁 Attempt ${i}: HTTP ${code}"
                 if (["200", "403", "302"].contains(code)) {
                     steps.echo "✅ Service healthy with code ${code}"
@@ -197,11 +198,11 @@ class ApplicationBuilder implements Serializable {
                 }
                 steps.sleep(time: delaySeconds, unit: 'SECONDS')
             }
-
+    
             if (!success) {
                 throw new Exception("Health check failed after ${maxAttempts} attempts")
             }
-
+    
         } catch (Exception e) {
             steps.echo "❌ Health check failed for ${containerName}"
             runCommand("docker logs ${containerName} || true")
