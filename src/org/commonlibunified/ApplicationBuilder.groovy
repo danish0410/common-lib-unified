@@ -36,7 +36,6 @@ class ApplicationBuilder implements Serializable {
             if (!repoName?.trim()) steps.error("❌ 'REPO_NAME' must be provided.")
 
             def configText = steps.libraryResource("common-repo-list.js")
-            //steps.writeFile(file: "common-repo-list.js", text: configText)
             parsedMap = parseAndNormalizeJson(configText)
 
             appTypeKey = parsedMap.find { key, repos -> 
@@ -48,7 +47,6 @@ class ApplicationBuilder implements Serializable {
             appType = appTypeKey.toLowerCase()
             repoConfig = parsedMap[appTypeKey].find { it['repo-name'] == repoName }
 
-            //def isEureka = (appType == 'eureka')
             dockerPort = getDefaultDockerPort(appType)
             hostPort = findAvailablePortForType(appType)
             if (!hostPort) steps.error("❌ No available port found for type '${appType}'.")
@@ -99,51 +97,51 @@ class ApplicationBuilder implements Serializable {
         steps.echo "⚙️ build() invoked"
         def basePath = "target-repo/${repoName}"
         steps.dir(basePath) {
-            switch (appType) {
-                case 'springboot': buildSpringBootApp(); break
-                case 'nodejs':     buildNodeApp(); break
-                case 'python':     buildPythonApp(); break
-                case 'ruby':       buildRubyApp(); break
-                case 'nginx':
-                case 'php':        buildStaticApp(); break
-                default:           steps.error("❌ Unsupported appType: ${appType}")
-            }
+            buildApp(appType)
         }
     }
 
-    private void buildSpringBootApp() {
-        def pom = steps.findFiles(glob: '**/pom.xml')
-        if (!pom) steps.error("❌ pom.xml not found.")
-        def pomPath = pom[0].path.replaceAll('\\\\', '/')
-        def dir = pomPath.contains('/') ? pomPath.substring(0, pomPath.lastIndexOf('/')) : '.'
-        steps.dir(dir) {
-            runCommand('mvn clean install -DskipTests')
-            runCommand('mvn package -DskipTests')
-            checkDockerfileExists()
-            runCommand("docker build -t ${imageName}:latest .")
+    private void buildApp(String appType) {
+        switch (appType.toLowerCase()) {
+            case 'springboot':
+                def pom = steps.findFiles(glob: '**/pom.xml')
+                if (!pom) steps.error("❌ pom.xml not found.")
+                def pomPath = pom[0].path.replaceAll('\\\\', '/')
+                def dir = pomPath.contains('/') ? pomPath.substring(0, pomPath.lastIndexOf('/')) : '.'
+                steps.dir(dir) {
+                    runCommand('mvn clean install package -DskipTests')
+                    buildDockerImage()
+                }
+                break
+
+            case 'nodejs':
+                runCommand('npm install')
+                runCommand('npm run build || echo "⚠️ No build step defined."')
+                buildDockerImage()
+                break
+
+            case 'python':
+                runCommand('pip install -r requirements.txt || echo "⚠️ requirements.txt missing."')
+                buildDockerImage()
+                break
+
+            case 'ruby':
+                runCommand('bundle install || echo "⚠️ bundle install failed."')
+                buildDockerImage()
+                break
+
+            case 'nginx':
+            case 'static':
+            case 'php':
+                buildDockerImage()
+                break
+
+            default:
+                steps.error("❌ Unsupported app type: ${appType}")
         }
     }
 
-    private void buildNodeApp() {
-        runCommand('npm install')
-        runCommand('npm run build || echo "⚠️ No build step defined."')
-        checkDockerfileExists()
-        runCommand("docker build -t ${imageName}:latest .")
-    }
-
-    private void buildPythonApp() {
-        runCommand('pip install -r requirements.txt || echo "⚠️ requirements.txt missing."')
-        checkDockerfileExists()
-        runCommand("docker build -t ${imageName}:latest .")
-    }
-
-    private void buildRubyApp() {
-        runCommand('bundle install || echo "⚠️ bundle install failed."')
-        checkDockerfileExists()
-        runCommand("docker build -t ${imageName}:latest .")
-    }
-
-    private void buildStaticApp() {
+    private void buildDockerImage() {
         checkDockerfileExists()
         runCommand("docker build -t ${imageName}:latest .")
     }
@@ -167,31 +165,30 @@ class ApplicationBuilder implements Serializable {
             steps.echo "⚠️ Skipping health check."
             return
         }
-    
+
         String url = "http://localhost:${hostPort}${getHealthEndpoint(appType)}"
         performHealthCheck(url, containerName)
     }
-    
+
     void performHealthCheck(String url, String containerName) {
         try {
             steps.echo "⏳ Starting health check for ${url}"
             steps.sleep(time: 40, unit: 'SECONDS')  // ⏱ Increased wait for slow startup
-    
+
             def success = false
             def maxAttempts = 10
             def delaySeconds = 3
-    
+
             for (int i = 1; i <= maxAttempts; i++) {
                 def code
                 if (steps.isUnix()) {
                     code = steps.sh(script: "curl -s -o /dev/null -w \"%{http_code}\" ${url}", returnStdout: true).trim()
                 } else {
-                    // Optional verbose output for debugging
                     def fullOutput = steps.bat(script: "curl -v ${url}", returnStdout: true)
                     fullOutput.readLines().each { steps.echo "💬 curl: ${it}" }
                     code = extractStatusCode(steps.bat(script: "curl -s -o NUL -w \"%%{http_code}\" ${url}", returnStdout: true))
                 }
-    
+
                 steps.echo "🔁 Attempt ${i}: HTTP ${code}"
                 if (["200", "403", "302"].contains(code)) {
                     steps.echo "✅ Service healthy with code ${code}"
@@ -200,11 +197,11 @@ class ApplicationBuilder implements Serializable {
                 }
                 steps.sleep(time: delaySeconds, unit: 'SECONDS')
             }
-    
+
             if (!success) {
                 throw new Exception("Health check failed after ${maxAttempts} attempts")
             }
-    
+
         } catch (Exception e) {
             steps.echo "❌ Health check failed for ${containerName}"
             runCommand("docker logs ${containerName} || true")
@@ -226,7 +223,7 @@ class ApplicationBuilder implements Serializable {
         '''
         runCommand(cmd)
     }
-    
+
     private String getDefaultDockerPort(String appType) {
         switch (appType) {
             case 'springboot': return '8080'
@@ -234,21 +231,21 @@ class ApplicationBuilder implements Serializable {
             default:           return '80'
         }
     }
-    
+
     private String getHealthEndpoint(String appType) {
         switch (appType) {
             case 'springboot': return "/actuator/health"
             default:           return "/"
         }
     }
-    
+
     private void checkDockerfileExists() {
         def found = steps.findFiles(glob: '**/Dockerfile')
         if (!found || found.size() == 0) {
             steps.error("❌ Dockerfile not found.")
         }
     }
-    
+
     private void runCommand(String command) {
         steps.echo "▶️ ${command}"
         if (steps.isUnix()) {
@@ -257,7 +254,7 @@ class ApplicationBuilder implements Serializable {
             steps.bat(command)
         }
     }
-    
+
     private String extractStatusCode(String output) {
         def lines = output.readLines().findAll { it.trim() }
         return lines ? lines[-1].trim() : "000"
