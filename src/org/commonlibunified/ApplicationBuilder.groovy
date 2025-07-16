@@ -36,16 +36,19 @@ class ApplicationBuilder implements Serializable {
             if (!repoName?.trim()) steps.error("❌ 'REPO_NAME' must be provided.")
 
             def configText = steps.libraryResource("common-repo-list.js")
-            steps.writeFile(file: "common-repo-list.js", text: configText)
-
+            //steps.writeFile(file: "common-repo-list.js", text: configText)
             parsedMap = parseAndNormalizeJson(configText)
-            appTypeKey = findAppType(repoName, parsedMap)
-            if (!appTypeKey) steps.error("❌ Repository '${repoName}' not found in config.")
 
+            appTypeKey = parsedMap.find { key, repos -> 
+                repos.any { it['repo-name'] == repoName }
+            }?.key
+            
+            if (!appTypeKey) steps.error("❌ Repository '${repoName}' not found in config.")
+            
             appType = appTypeKey.toLowerCase()
             repoConfig = parsedMap[appTypeKey].find { it['repo-name'] == repoName }
 
-            def isEureka = (appType == 'eureka')
+            //def isEureka = (appType == 'eureka')
             dockerPort = getDefaultDockerPort(appType)
             hostPort = findAvailablePortForType(appType)
             if (!hostPort) steps.error("❌ No available port found for type '${appType}'.")
